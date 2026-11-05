@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 起名助手</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      padding: 40px;
+    }
+    h1 {
+      font-size: 28px;
+      color: #333;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      border: 2px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 15px;
+      resize: vertical;
+      outline: none;
+      transition: border-color .2s;
+      font-family: inherit;
+    }
+    textarea:focus { border-color: #667eea; }
+    button {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    button:hover:not(:disabled) { opacity: .9; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .result {
+      margin-top: 32px;
+      padding: 20px;
+      background: #f8f9fc;
+      border-radius: 10px;
+      min-height: 60px;
+      white-space: pre-wrap;
+      line-height: 1.8;
+      font-size: 15px;
+      color: #333;
+      display: none;
+    }
+    .result.visible { display: block; }
+    .cursor::after {
+      content: '▋';
+      display: inline-block;
+      animation: blink 1s infinite;
+      color: #667eea;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .hint {
+      font-size: 13px;
+      color: #aaa;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>✨ AI 起名助手</h1>
+    <p class="subtitle">描述你的需求，AI 为你生成 3 组名字及寓意</p>
+
+    <textarea id="input" placeholder="例如：给我家刚出生的女儿起个名字，希望她优雅、聪慧，姓林"></textarea>
+    <p class="hint">支持：宝宝起名、宠物起名、品牌起名、网名/笔名等</p>
+
+    <button id="btn">开始生成</button>
+
+    <div class="result" id="result"></div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('btn');
+    const input = document.getElementById('input');
+    const result = document.getElementById('result');
+
+    btn.addEventListener('click', async () => {
+      const text = input.value.trim();
+      if (!text) { alert('请先描述你的起名需求'); return; }
+
+      btn.disabled = true;
+      btn.textContent = '生成中...';
+      result.classList.add('visible');
+      result.innerHTML = '<span class="cursor"></span>';
+
+      try {
+        const res = await fetch('/api/name', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_input: text })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || '请求失败');
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // 按 SSE 事件分割（空行分隔）
+          const events = buffer.split('\n\n');
+          buffer = events.pop(); // 最后一段可能不完整，留到下次
+
+          for (const evt of events) {
+            const line = evt.trim();
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+            try {
+              const json = JSON.parse(data);
+              if (json.delta) {
+                // 移除光标，追加文本，再加回光标
+                const current = result.innerHTML.replace('<span class="cursor"></span>', '');
+                result.innerHTML = current + escapeHtml(json.delta) + '<span class="cursor"></span>';
+              }
+              if (json.error) throw new Error(json.error);
+            } catch (e) {
+              // 非 JSON 数据忽略
+            }
+          }
+        }
+
+        // 结束后去掉光标
+        result.innerHTML = result.innerHTML.replace('<span class="cursor"></span>', '');
+      } catch (e) {
+        result.innerHTML = '<span style="color:#e53e3e;">出错了：' + escapeHtml(e.message) + '</span>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '开始生成';
+      }
+    });
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
