@@ -20,18 +20,18 @@
       box-shadow: 0 20px 60px rgba(0,0,0,0.2);
       padding: 40px;
     }
-    h1 {
-      font-size: 28px;
-      color: #333;
-      margin-bottom: 8px;
-      text-align: center;
-    }
-    .subtitle {
-      text-align: center;
-      color: #888;
-      margin-bottom: 32px;
+    h1 { font-size: 28px; color: #333; margin-bottom: 8px; text-align: center; }
+    .subtitle { text-align: center; color: #888; margin-bottom: 32px; font-size: 14px; }
+
+    .field { margin-bottom: 18px; }
+    .field-label {
+      display: block;
       font-size: 14px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 8px;
     }
+
     textarea {
       width: 100%;
       min-height: 100px;
@@ -45,10 +45,31 @@
       font-family: inherit;
     }
     textarea:focus { border-color: #667eea; }
+
+    select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #e5e7eb;
+      border-radius: 10px;
+      font-size: 15px;
+      font-family: inherit;
+      background: #fff;
+      color: #333;
+      outline: none;
+      cursor: pointer;
+      transition: border-color .2s;
+      appearance: none;
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8.5L1.5 4h9z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 38px;
+    }
+    select:focus { border-color: #667eea; }
+
     button {
       display: block;
       width: 100%;
-      margin-top: 16px;
+      margin-top: 8px;
       padding: 14px;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: #fff;
@@ -57,23 +78,44 @@
       font-size: 16px;
       font-weight: 600;
       cursor: pointer;
-      transition: opacity .2s, transform .1s;
+      transition: opacity .2s;
     }
     button:hover:not(:disabled) { opacity: .9; }
     button:disabled { opacity: .5; cursor: not-allowed; }
+
     .result {
-      margin-top: 32px;
+      margin-top: 28px;
       padding: 20px;
       background: #f8f9fc;
       border-radius: 10px;
       min-height: 60px;
-      white-space: pre-wrap;
-      line-height: 1.8;
+      line-height: 1.9;
       font-size: 15px;
       color: #333;
       display: none;
+      white-space: pre-wrap;
     }
     .result.visible { display: block; }
+    .result-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+      border-bottom: 1px dashed #e5e7eb;
+      font-size: 13px;
+      color: #888;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #eef0ff;
+      color: #5b63c9;
+      font-size: 12px;
+      font-weight: 600;
+    }
     .cursor::after {
       content: '▋';
       display: inline-block;
@@ -81,50 +123,135 @@
       color: #667eea;
     }
     @keyframes blink { 50% { opacity: 0; } }
-    .hint {
+
+    .hint { font-size: 13px; color: #aaa; margin-top: 8px; }
+    .notice {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
       font-size: 13px;
-      color: #aaa;
-      margin-top: 8px;
+      background: #fff5f5;
+      color: #c53030;
+      display: none;
     }
+    .notice.visible { display: block; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>✨ AI 起名助手</h1>
-    <p class="subtitle">描述你的需求，AI 为你生成 3 组名字及寓意</p>
+    <p class="subtitle">描述你的需求，选一个模型，生成 3 组名字及寓意</p>
 
-    <textarea id="input" placeholder="例如：给我家刚出生的女儿起个名字，希望她优雅、聪慧，姓林"></textarea>
-    <p class="hint">支持：宝宝起名、宠物起名、品牌起名、网名/笔名等</p>
+    <div class="field">
+      <label class="field-label" for="input">起名需求</label>
+      <textarea id="input" placeholder="例如：给我家刚出生的女儿起个名字，希望她优雅、聪慧，姓林"></textarea>
+      <p class="hint">支持：宝宝起名、宠物起名、品牌起名、网名/笔名等</p>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="provider">选择模型</label>
+      <select id="provider">
+        <option value="deepseek">DeepSeek</option>
+      </select>
+    </div>
 
     <button id="btn">开始生成</button>
+    <div class="notice" id="notice"></div>
 
-    <div class="result" id="result"></div>
+    <div class="result" id="result">
+      <div class="result-head">
+        <span>生成结果</span>
+        <span class="badge" id="badge"></span>
+      </div>
+      <div id="content"></div>
+    </div>
   </div>
 
   <script>
     const btn = document.getElementById('btn');
     const input = document.getElementById('input');
+    const providerEl = document.getElementById('provider');
     const result = document.getElementById('result');
+    const content = document.getElementById('content');
+    const badge = document.getElementById('badge');
+    const notice = document.getElementById('notice');
+
+    let modelList = [];
+
+    // 页面加载时探测哪些模型配好了密钥
+    (async function loadModels() {
+      try {
+        const res = await fetch('/api/name');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        modelList = data.providers || [];
+
+        providerEl.innerHTML = '';
+        modelList.forEach((p) => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.available
+            ? `${p.label}（${p.model}）`
+            : `${p.label}（未配置密钥）`;
+          opt.disabled = !p.available;
+          if (p.id === data.defaultProvider && p.available) opt.selected = true;
+          if (p.id === data.defaultProvider) opt.dataset.default = '1';
+          providerEl.appendChild(opt);
+        });
+
+        // 默认模型不可用时，选第一个可用的
+        if (!modelList.some((p) => p.id === providerEl.value && p.available)) {
+          const first = modelList.find((p) => p.available);
+          if (first) providerEl.value = first.id;
+        }
+
+        if (!modelList.some((p) => p.available)) {
+          showNotice('当前没有可用的模型，请先在 Vercel 配置至少一个模型的 API Key 环境变量。');
+        }
+      } catch (e) {
+        // 探测失败不阻塞，退回默认选项
+        console.warn('模型列表加载失败', e);
+        providerEl.innerHTML = '<option value="deepseek">DeepSeek</option>';
+      }
+    })();
+
+    function showNotice(text) {
+      notice.textContent = text;
+      notice.classList.add('visible');
+    }
+    function hideNotice() {
+      notice.classList.remove('visible');
+      notice.textContent = '';
+    }
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
 
     btn.addEventListener('click', async () => {
       const text = input.value.trim();
       if (!text) { alert('请先描述你的起名需求'); return; }
 
+      hideNotice();
       btn.disabled = true;
       btn.textContent = '生成中...';
       result.classList.add('visible');
-      result.innerHTML = '<span class="cursor"></span>';
+      content.innerHTML = '<span class="cursor"></span>';
+
+      const current = modelList.find((p) => p.id === providerEl.value);
+      badge.textContent = current ? current.label : providerEl.value;
 
       try {
         const res = await fetch('/api/name', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_input: text })
+          body: JSON.stringify({ user_input: text, provider: providerEl.value })
         });
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || '请求失败');
+          throw new Error(err.error || `请求失败（HTTP ${res.status}）`);
         }
 
         const reader = res.body.getReader();
@@ -136,44 +263,35 @@
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
-          // 按 SSE 事件分割（空行分隔）
           const events = buffer.split('\n\n');
-          buffer = events.pop(); // 最后一段可能不完整，留到下次
+          buffer = events.pop();
 
           for (const evt of events) {
             const line = evt.trim();
-            if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-            try {
-              const json = JSON.parse(data);
-              if (json.delta) {
-                // 移除光标，追加文本，再加回光标
-                const current = result.innerHTML.replace('<span class="cursor"></span>', '');
-                result.innerHTML = current + escapeHtml(json.delta) + '<span class="cursor"></span>';
-              }
-              if (json.error) throw new Error(json.error);
-            } catch (e) {
-              // 非 JSON 数据忽略
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (!data || data === '[DONE]') continue;
+
+            let json;
+            try { json = JSON.parse(data); } catch { continue; }
+
+            if (json.delta) {
+              const plain = content.textContent;
+              content.innerHTML = escapeHtml(plain + json.delta) + '<span class="cursor"></span>';
             }
+            if (json.error) throw new Error(json.error);
+            if (json.saveError) console.warn('落库失败：', json.saveError);
           }
         }
 
-        // 结束后去掉光标
-        result.innerHTML = result.innerHTML.replace('<span class="cursor"></span>', '');
+        content.innerHTML = escapeHtml(content.textContent);
       } catch (e) {
-        result.innerHTML = '<span style="color:#e53e3e;">出错了：' + escapeHtml(e.message) + '</span>';
+        content.innerHTML = '<span style="color:#e53e3e;">出错了：' + escapeHtml(e.message) + '</span>';
       } finally {
         btn.disabled = false;
         btn.textContent = '开始生成';
       }
     });
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
   </script>
 </body>
 </html>
