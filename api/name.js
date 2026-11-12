@@ -49,6 +49,21 @@ function isReady(config) {
   return Boolean(config && config.apiKey && config.model);
 }
 
+/**
+ * 从上游错误响应里抽出可读信息。
+ * 四家厂商错误格式基本一致：{"error":{"message":"..."}}，兜底再试 message 字段。
+ */
+function extractErrorMessage(raw) {
+  if (!raw) return '';
+  try {
+    const json = JSON.parse(raw);
+    const msg = json.error?.message || json.message || json.error || '';
+    return String(msg).slice(0, 300);
+  } catch {
+    return String(raw).slice(0, 300);
+  }
+}
+
 const SYSTEM_PROMPT = `你是一位资深的起名专家。根据用户的需求，给出 3 组名字方案，每组名字都要附带简短的寓意解释。
 
 输出要求：
@@ -179,10 +194,22 @@ export default async function handler(req, res) {
   }
 
   if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text().catch(() => '');
+    const raw = await upstream.text().catch(() => '');
+    const detail = extractErrorMessage(raw);
+
+    // 把常见的上游错误翻译成人话，方便前端直接展示
+    const friendly = {
+      401: `${config.label} 的 API Key 无效或已过期，请检查 ${config.apiKeyName}`,
+      402: `${config.label} 账户余额不足（HTTP 402），请到控制台充值，或切换到其他模型`,
+      403: `${config.label} 无权限调用该模型，请检查密钥权限或模型名`,
+      404: `${config.label} 找不到该模型（HTTP 404），请检查模型名是否正确${provider === 'doubao' ? '（豆包需填 ep- 开头的推理接入点 ID）' : ''}`,
+      429: `${config.label} 请求过于频繁或额度已用尽（HTTP 429），请稍后再试`
+    }[upstream.status] || `${config.label} 返回错误（HTTP ${upstream.status}）`;
+
     return res.status(502).json({
-      error: `${config.label} 返回错误（HTTP ${upstream.status}）`,
-      detail: detail.slice(0, 500)
+      error: friendly,
+      upstreamStatus: upstream.status,
+      detail
     });
   }
 
