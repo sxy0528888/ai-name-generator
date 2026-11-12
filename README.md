@@ -71,6 +71,75 @@ create index if not exists idx_name_generations_provider
 alter table public.name_generations enable row level security;
 ```
 
+## 权限配置（RLS）说明
+
+### 当前方案（已验证可用）
+
+表上已开启 RLS，但**没有给 anon / authenticated 角色开放任何 policy**。写入只由后端 Serverless Function 用 `SUPABASE_SERVICE_ROLE_KEY` 执行，service_role 默认绕过 RLS。
+
+这样做的效果：
+
+| 角色 | 能不能读 | 能不能写 | 说明 |
+|---|---|---|---|
+| `anon` / `authenticated`（浏览器） | ❌ | ❌ | 没有 policy 即默认拒绝 |
+| `service_role`（后端函数） | ✅ | ✅ | 绕过 RLS，密钥只存在于 Vercel 环境变量 |
+
+**安全性要点**：`service_role` 密钥绝不能出现在前端代码或 `NEXT_PUBLIC_` / 浏览器可见变量里，一旦泄露等于整个数据库可写。本项目的 key 只存在于 `api/name.js` 运行时的 `process.env` 中，前端只调用自己的 `/api/name`，不直连 Supabase。
+
+### 调试阶段临时放开（不推荐长期使用）
+
+如果只是想临时让前端直接读表看数据，可以给 anon 开放只读：
+
+```sql
+-- 仅调试用：允许匿名只读
+create policy "debug read only"
+  on public.name_generations
+  for select
+  to anon
+  using (true);
+```
+
+调试结束务必删除：`drop policy "debug read only" on public.name_generations;`
+
+### 正式上线：带用户体系的推荐配置
+
+如果后续要「每个用户看自己的历史记录」，不要放开 anon，而是接 Supabase Auth：
+
+1. 建表时加一列记录归属用户：
+
+```sql
+alter table public.name_generations
+  add column if not exists user_id uuid references auth.users (id) on delete cascade;
+```
+
+2. 后端写入时带上当前登录用户（用 anon key + 用户 JWT 的客户端，而不是 service_role）：
+
+```js
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  global: { headers: { Authorization: `Bearer ${userJwt}` } }
+});
+```
+
+3. 只给「本人」开读写权限，RLS 自己完成鉴权：
+
+```sql
+create policy "own rows select"
+  on public.name_generations for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+create policy "own rows insert"
+  on public.name_generations for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+```
+
+4. 需要公开排行榜之类的场景，再单独用 `security definer` 函数或只读视图暴露聚合结果，不要直接开表。
+
+### 一句话总结（可直接写进报告）
+
+> 数据库层面开启 RLS 且不向匿名角色开放任何策略，所有写入经由后端函数以 service_role 执行，前端仅通过自有 API 间接访问；service_role 密钥只存放在服务端环境变量中。若需支持多用户历史记录，则引入 Supabase Auth，在表中冗余 `user_id`，并基于 `auth.uid()` 编写行级策略，实现最小权限访问。
+
 ## 本地开发
 
 ```bash
